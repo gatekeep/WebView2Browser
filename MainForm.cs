@@ -63,7 +63,7 @@ namespace WebView2Browser
             string script = @"
                 async function selectAudioOutputAsync() {
                     try {
-                        console.log(`EnumerateAudioDevices(): checkpoint 1`);
+                        console.log(`EnumerateAudioDevices(): checkpoint 1 -- request microphone permissions`);
 
                         // request microphone permission to get a full device list
                         try {
@@ -73,7 +73,7 @@ namespace WebView2Browser
                             console.warn('Audio permission denied, only default devices available:', err);
                         }
 
-                        console.log(`EnumerateAudioDevices(): checkpoint 2`);
+                        console.log(`EnumerateAudioDevices(): checkpoint 2 -- enumerate system devices`);
 
                         const devices = await navigator.mediaDevices.enumerateDevices();
                         if (devices == undefined || devices == null) {
@@ -89,7 +89,7 @@ namespace WebView2Browser
                             console.error('No output audio devices!');
                         }
 
-                        console.log(`EnumerateAudioDevices(): checkpoint 3`);
+                        console.log(`EnumerateAudioDevices(): checkpoint 3 -- IPC device list back to C#`);
 
                         for (const device of audioOutputs) {
                             console.log(`EnumerateAudioDevices(): ${device.kind}: ${device.label} id = ${device.deviceId}`);
@@ -117,23 +117,27 @@ namespace WebView2Browser
         {
             string script = $@"
                 async function setAllMediaSinkId(sinkId) {{
+                    console.log(`SetAudioOutput(): checkpoint 1 -- setting element tags to deviceId ${{sinkId}}`);
+
                     const mediaElements = document.querySelectorAll('audio, video');
                     for (const element of mediaElements) {{
                         try {{
                             await element.setSinkId(sinkId);
-                            console.log(`Set sinkId for element: ${{element.tagName}}`);
+                            console.log(`SetAudioOutput(): set sinkId for element: ${{element.tagName}}`);
                         }} catch (error) {{
-                            console.error(`Failed to set sinkId for element: ${{element.tagName}}`, error);
+                            console.error(`SetAudioOutput(): failed to set sinkId for element: ${{element.tagName}}`, error);
                         }}
                     }}
+
+                    console.log(`SetAudioOutput(): checkpoint 2 -- setting window context to deviceId ${{sinkId}}`);
 
                     if (window.AudioContext) {{
                         const audioContext = new AudioContext();
                         try {{
                             await audioContext.setSinkId(sinkId);
-                            console.log(`Set sinkId for AudioContext`);
+                            console.log(`SetAudioOutput(): set sinkId for AudioContext`);
                         }} catch (error) {{
-                            console.error(`Failed to set sinkId for AudioContext`, error);
+                            console.error(`SetAudioOutput(): failed to set sinkId for AudioContext`, error);
                         }}
                     }}
                 }}
@@ -145,6 +149,57 @@ namespace WebView2Browser
         }
 
         /// <summary>
+        /// 
+        /// </summary>
+        private async void ForcePageScrollback()
+        {
+            string script = @"
+                console.log(`ForcePageScrollback(): forcing page scrollback`);
+                window.scroll(0,0);
+            ";
+
+            await coreWebView2.ExecuteScriptAsync(script);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        private async void JavascriptGC()
+        {
+            string script = @"
+                console.log(`JavascriptGC(): forcing javascript garbage collection`);
+                window.gc();
+            ";
+
+            await coreWebView2.ExecuteScriptAsync(script);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        private async Task<string> IsAudioPlaying()
+        {
+            string script = @"
+                function isMediaPlaying() {
+                    var playing = false;
+                    const mediaElements = document.querySelectorAll('audio, video');
+                    for (const element of mediaElements) {
+                        if (!element.paused) {
+                            playing = true;
+                            break;
+                        }
+                    }
+
+                    return playing;
+                }
+                isMediaPlaying();
+            ";
+
+            return await coreWebView2.ExecuteScriptAsync(script);
+        }
+
+        /// <summary>
         /// Event that occurs once the WebView2 initialization is completed.
         /// </summary>
         /// <param name="sender"></param>
@@ -153,9 +208,9 @@ namespace WebView2Browser
         {
             if (e.IsSuccess)
             {
-                this.coreWebView2 = controlWebView2.CoreWebView2;
+                coreWebView2 = controlWebView2.CoreWebView2;
                 if (Program.ShowDevTools)
-                    this.coreWebView2.OpenDevToolsWindow();
+                    coreWebView2.OpenDevToolsWindow();
 
                 // hook events
                 coreWebView2.DocumentTitleChanged += CoreWebView2_DocumentTitleChanged;
@@ -208,7 +263,9 @@ namespace WebView2Browser
         /// <param name="e"></param>
         private void CoreWebView2_DOMContentLoaded(object? sender, CoreWebView2DOMContentLoadedEventArgs e)
         {
+            ForcePageScrollback();
             EnumerateAudioDevices();
+            JavascriptGC();
         }
 
         /// <summary>
@@ -218,7 +275,7 @@ namespace WebView2Browser
         /// <param name="e"></param>
         private void CoreWebView2_DocumentTitleChanged(object? sender, object e)
         {
-            Invoke(() => this.Text = this.controlWebView2.CoreWebView2.DocumentTitle);
+            Invoke(() => this.Text = controlWebView2.CoreWebView2.DocumentTitle);
         }
 
         /// <summary>
@@ -230,16 +287,9 @@ namespace WebView2Browser
         {
             controlWebView2.Source = new Uri(Program.StartupUrl);
 
-            if (Program.AutoRefresh)
+            if (Program.AutoRefresh > 0)
             {
-                DateTime now = DateTime.Now;
-                DateTime nextRunTime = now.Date.AddDays(1).AddHours(3);
-                if (now > nextRunTime)
-                    nextRunTime = nextRunTime.AddDays(1);
-
-                TimeSpan timeUntilFirstRun = nextRunTime - now;
-
-                refreshTimer = new System.Timers.Timer(timeUntilFirstRun.TotalMilliseconds);
+                refreshTimer = new System.Timers.Timer(TimeSpan.FromMinutes(Program.AutoRefresh).TotalMilliseconds);
                 refreshTimer.Elapsed += OnRefreshTimedEvent;
                 refreshTimer.AutoReset = false;
                 refreshTimer.Start();
@@ -253,11 +303,30 @@ namespace WebView2Browser
         /// <param name="e"></param>
         private void OnRefreshTimedEvent(object source, ElapsedEventArgs e)
         {
-            Invoke(() => this.coreWebView2.Reload());
+            // clear cache and refresh
+            Invoke(async () => {
+                string isPlaying = await IsAudioPlaying();
+                if (isPlaying == "true")
+                {
+                    refreshTimer.Interval = TimeSpan.FromSeconds(15).TotalMilliseconds;
+                    refreshTimer.AutoReset = true;
+                    refreshTimer.Start();
 
-            refreshTimer.Interval = TimeSpan.FromDays(1).TotalMilliseconds;
-            refreshTimer.AutoReset = true;
-            refreshTimer.Start();
+                    await coreWebView2.ExecuteScriptAsync(@"console.log(`OnRefreshTimedEvent(): audio active -- skipping refresh for 15 seconds`)");
+                    return;
+                }
+
+                refreshTimer.Interval = TimeSpan.FromMinutes(Program.AutoRefresh).TotalMilliseconds;
+                refreshTimer.AutoReset = true;
+                refreshTimer.Start();
+
+                await coreWebView2.Profile.ClearBrowsingDataAsync();
+                JavascriptGC();
+                coreWebView2.Reload();
+
+                // force scroll back to top
+                ForcePageScrollback();
+            });
         }
     }
 

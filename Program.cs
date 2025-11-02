@@ -99,9 +99,9 @@ namespace WebView2Browser
         }
 
         /// <summary>
-        /// Gets or sets a flag indicating the browser should refresh every 24 hours.
+        /// Gets or sets a flag indicating the browser should refresh every specified number of minutes.
         /// </summary>
-        public static bool AutoRefresh
+        public static int AutoRefresh
         {
             get;
             set;
@@ -144,6 +144,8 @@ namespace WebView2Browser
             bool showHelp = false;
 
             WaveOutDevice = "default";
+            string autoRefreshString = string.Empty;
+            AutoRefresh = 0;
 
             ConsoleHelper.AttachParentConsole();
 
@@ -155,7 +157,7 @@ namespace WebView2Browser
 
                 { "o=|output-device=", "audio output device", v => WaveOutDevice = v },
 
-                { "auto-refresh", "automatically refresh browser every 24 hours", v => AutoRefresh = v != null },
+                { "auto-refresh=", "automatically refresh browser every number of specified minutes", v => autoRefreshString = v },
 
                 { "url=", "startup URL", v => StartupUrl = v },
             };
@@ -192,6 +194,27 @@ namespace WebView2Browser
                 Console.WriteLine("error: no output audio device specified!");
                 Usage(options);
                 Environment.Exit((int)ERRNO.EBADOPTIONS);
+            }
+
+            if (autoRefreshString == null)
+                AutoRefresh = 0;
+            if (autoRefreshString == string.Empty)
+                AutoRefresh = 0;
+
+            if (autoRefreshString != null)
+            {
+                if (autoRefreshString != string.Empty)
+                {
+                    int refresh = -1;
+                    if (int.TryParse(autoRefreshString, out refresh))
+                        AutoRefresh = refresh;
+                    else
+                    {
+                        Console.WriteLine($"error: could not process {autoRefreshString} as a refresh time!");
+                        Usage(options);
+                        Environment.Exit((int)ERRNO.EBADOPTIONS);
+                    }
+                }
             }
 
             if (StartupUrl == string.Empty)
