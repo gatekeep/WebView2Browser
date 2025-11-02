@@ -60,6 +60,49 @@ namespace WebView2Browser
         /// <summary>
         /// 
         /// </summary>
+        private async void AudioPlaybackWatchdog()
+        {
+            string script = @"
+                var lastPlayedTime = Date.now();
+                var inactivtyWarning = false;
+                const inactivityThreshold = 300000;
+
+                const mediaElements = document.querySelectorAll('audio');
+                for (const element of mediaElements) {
+                    element.addEventListener('timeupdate', () => {
+                        lastPlayedTime = Date.now();
+                        inactivityWarning = false;
+                    });
+
+                    element.addEventListener('play', () => {
+                        lastPlayedTime = Date.now();
+                        inactivityWarning = false;
+                        console.log(`AudioPlaybackWatchdog(): active audio playback at ${lastPlayedTime}`);
+                    });
+
+                    element.addEventListener('pause', () => {
+                        console.log(`AudioPlaybackWatchdog(): audio playback has stopped`);
+                    });
+
+                    setInterval(() => {
+                        const now = Date.now();
+                        if (now - lastPlayedTime > (inactivityThreshold / 2) && !inactivityWarning) {
+                            inactivityWarning = true;
+                            console.log(`AudioPlaybackWatchdog(): warning, last audio playback at ${lastPlayedTime}, will refresh in ${inactivityThreshold / 2}s`);
+                        }
+                        if (now - lastPlayedTime > inactivityThreshold && !element.paused && !element.ended) {
+                            window.location.reload();
+                        }
+                    }, 1000); // Check every second
+                }
+            ";
+
+            await coreWebView2.ExecuteScriptAsync(script);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
         private async void EnumerateAudioDevices()
         {
             string script = @"
@@ -202,6 +245,23 @@ namespace WebView2Browser
         }
 
         /// <summary>
+        /// 
+        /// </summary>
+        private void TriggerPageRefresh()
+        {
+            // clear cache and refresh
+            Invoke(async () =>
+            {
+                await coreWebView2.Profile.ClearBrowsingDataAsync();
+                JavascriptGC();
+                coreWebView2.Reload();
+
+                // force scroll back to top
+                ForcePageScrollback();
+            });
+        }
+
+        /// <summary>
         /// Event that occurs once the WebView2 initialization is completed.
         /// </summary>
         /// <param name="sender"></param>
@@ -268,6 +328,7 @@ namespace WebView2Browser
             ForcePageScrollback();
             EnumerateAudioDevices();
             JavascriptGC();
+            AudioPlaybackWatchdog();
         }
 
         /// <summary>
@@ -324,13 +385,7 @@ namespace WebView2Browser
                 refreshTimer.Start();
 
                 defermentCount = 0;
-
-                await coreWebView2.Profile.ClearBrowsingDataAsync();
-                JavascriptGC();
-                coreWebView2.Reload();
-
-                // force scroll back to top
-                ForcePageScrollback();
+                TriggerPageRefresh();
             });
         }
     }
