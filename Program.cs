@@ -99,9 +99,18 @@ namespace WebView2Browser
         }
 
         /// <summary>
-        /// Gets or sets a flag indicating the browser should refresh every specified number of minutes.
+        /// Gets or sets the number of minutes before refreshing the browser.
         /// </summary>
         public static int AutoRefresh
+        {
+            get;
+            set;
+        }
+
+        /// <summary>
+        /// Gets or sets the maximum number of refresh deferments before forcing refresh.
+        /// </summary>
+        public static int MaxDeferredBeforeRefresh
         {
             get;
             set;
@@ -144,8 +153,9 @@ namespace WebView2Browser
             bool showHelp = false;
 
             WaveOutDevice = "default";
-            string autoRefreshString = string.Empty;
+            string autoRefreshString = string.Empty, maxDeferredRefreshString = string.Empty;
             AutoRefresh = 0;
+            MaxDeferredBeforeRefresh = 5;
 
             ConsoleHelper.AttachParentConsole();
 
@@ -158,6 +168,7 @@ namespace WebView2Browser
                 { "o=|output-device=", "audio output device", v => WaveOutDevice = v },
 
                 { "auto-refresh=", "automatically refresh browser every number of specified minutes", v => autoRefreshString = v },
+                { "force-refresh-after=", "force refresh browser after specified number of deferments", v => maxDeferredRefreshString = v },
 
                 { "url=", "startup URL", v => StartupUrl = v },
             };
@@ -211,6 +222,27 @@ namespace WebView2Browser
                     else
                     {
                         Console.WriteLine($"error: could not process {autoRefreshString} as a refresh time!");
+                        Usage(options);
+                        Environment.Exit((int)ERRNO.EBADOPTIONS);
+                    }
+                }
+            }
+
+            if (maxDeferredRefreshString == null)
+                MaxDeferredBeforeRefresh = 5;
+            if (maxDeferredRefreshString == string.Empty)
+                MaxDeferredBeforeRefresh = 5;
+
+            if (maxDeferredRefreshString != null)
+            {
+                if (maxDeferredRefreshString != string.Empty)
+                {
+                    int cnt = -1;
+                    if (int.TryParse(maxDeferredRefreshString, out cnt))
+                        MaxDeferredBeforeRefresh = cnt;
+                    else
+                    {
+                        Console.WriteLine($"error: could not process {maxDeferredRefreshString} as a deferment count!");
                         Usage(options);
                         Environment.Exit((int)ERRNO.EBADOPTIONS);
                     }

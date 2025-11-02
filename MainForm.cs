@@ -38,6 +38,8 @@ namespace WebView2Browser
         private List<MediaDeviceInfo> audioOutputs = new List<MediaDeviceInfo>();
         private MediaDeviceInfo defaultMediaDevice = null;
 
+        private int defermentCount = 0;
+
         /*
         ** Methods
         */
@@ -306,19 +308,22 @@ namespace WebView2Browser
             // clear cache and refresh
             Invoke(async () => {
                 string isPlaying = await IsAudioPlaying();
-                if (isPlaying == "true")
+                if (isPlaying == "true" && defermentCount < Program.MaxDeferredBeforeRefresh)
                 {
                     refreshTimer.Interval = TimeSpan.FromSeconds(15).TotalMilliseconds;
                     refreshTimer.AutoReset = true;
                     refreshTimer.Start();
 
                     await coreWebView2.ExecuteScriptAsync(@"console.log(`OnRefreshTimedEvent(): audio active -- skipping refresh for 15 seconds`)");
+                    defermentCount++;
                     return;
                 }
 
                 refreshTimer.Interval = TimeSpan.FromMinutes(Program.AutoRefresh).TotalMilliseconds;
                 refreshTimer.AutoReset = true;
                 refreshTimer.Start();
+
+                defermentCount = 0;
 
                 await coreWebView2.Profile.ClearBrowsingDataAsync();
                 JavascriptGC();
