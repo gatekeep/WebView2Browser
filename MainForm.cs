@@ -35,13 +35,12 @@ namespace WebView2Browser
         private System.Timers.Timer refreshTimer;
         private CoreWebView2 coreWebView2;
 
-        private List<MediaDeviceInfo> audioOutputs = new List<MediaDeviceInfo>();
-        private MediaDeviceInfo defaultMediaDevice = null;
-
         private int defermentCount = 0;
 
         private int numberOfPageLoads = 0;
         private DateTime lastPageLoad = DateTime.Now;
+
+        private bool devicesEnumerated = false;
 
         /*
         ** Methods
@@ -78,6 +77,9 @@ namespace WebView2Browser
                     });
 
                     element.addEventListener('play', () => {
+                        // send IPC message
+                        window.chrome.webview.postMessage('INTERNAL_RESET_AUDIO_DEVICE');
+
                         lastPlayedTime = Date.now();
                         inactivityWarning = false;
                         console.log(`AudioPlaybackWatchdog(): active audio playback at ${lastPlayedTime}`);
@@ -85,6 +87,9 @@ namespace WebView2Browser
 
                     element.addEventListener('pause', () => {
                         console.log(`AudioPlaybackWatchdog(): audio playback has stopped`);
+
+                        // send IPC message
+                        window.chrome.webview.postMessage('INTERNAL_RESET_AUDIO_DEVICE');
                     });
 
                     setInterval(() => {
@@ -108,12 +113,21 @@ namespace WebView2Browser
         /// <summary>
         /// 
         /// </summary>
-        private async void EnumerateAudioDevices()
+        private async void CreateGlobalFunctions()
         {
             string script = @"
-                async function selectAudioOutputAsync() {
+                var localDeviceLabel = 'default';
+
+                async function SetDeviceLabel(label) {
+                    localDeviceLabel = label.toLowerCase();
+                    console.log(`SetDeviceLabel(): checkpoint 1 -- setting device label to ${localDeviceLabel}`);
+                }
+
+                async function EnumerateAudioDevices() {
                     try {
                         console.log(`EnumerateAudioDevices(): checkpoint 1 -- request microphone permissions`);
+
+                        var sinkId = null;
 
                         // request microphone permission to get a full device list
                         try {
@@ -139,21 +153,73 @@ namespace WebView2Browser
                             console.error('No output audio devices!');
                         }
 
-                        console.log(`EnumerateAudioDevices(): checkpoint 3 -- IPC device list back to C#`);
-
+                        console.log(`EnumerateAudioDevices(): checkpoint 3 -- process device list, ${audioOutputs.length} devices`);
                         for (const device of audioOutputs) {
-                            console.log(`EnumerateAudioDevices(): ${device.kind}: ${device.label} id = ${device.deviceId}`);
+                            const deviceLabel = device.label.toLowerCase();
+                            const deviceId = device.deviceId.toLowerCase();
+                            if (deviceLabel.includes(localDeviceLabel) || deviceId.includes(localDeviceLabel)) {
+                                console.log(`EnumerateAudioDevices(): checkpoint 4 -- found device ${localDeviceLabel}, deviceId ${device.deviceId}, setting audio output`);
+                                sinkId = device.deviceId;
+                                break;
+                            }
                         }
 
-                        // send IPC message
-                        window.chrome.webview.postMessage('INTERNAL_AUDIO_DEVICES_LIST:' + JSON.stringify(audioOutputs));
+                        if (sinkId == null) {
+                            console.error(`EnumerateAudioDevices(): checkpoint 4 -- failed to find device ${localDeviceLabel}!!!`);
+                            return false;
+                        }
+
+                        await SetAudioOutput(sinkId);
 
                         return true;
                     } catch (err) {
                         console.error(`EnumerateAudioDevices() failed: ${err}`);
                     }
                 }
-                selectAudioOutputAsync();
+
+                async function SetAudioOutput(sinkId) {
+                    if (sinkId == null) {
+                        console.error(`SetAudioOutput(): device sink Id was not set!`);
+                        return;
+                    }
+
+                    console.log(`SetAudioOutput(): checkpoint 1 -- setting element tags to deviceId ${sinkId}`);
+
+                    const mediaElements = document.querySelectorAll('audio, video');
+                    for (const element of mediaElements) {
+                        try {
+                            await element.setSinkId(sinkId);
+                            console.log(`SetAudioOutput(): set sinkId for element: ${element.tagName}`);
+                        } catch (error) {
+                            console.error(`SetAudioOutput(): failed to set sinkId for element: ${element.tagName}`, error);
+                        }
+                    }
+
+                    console.log(`SetAudioOutput(): checkpoint 2 -- setting window context to deviceId ${sinkId}`);
+
+                    if (window.AudioContext) {
+                        const audioContext = new AudioContext();
+                        try {
+                            await audioContext.setSinkId(sinkId);
+                            console.log(`SetAudioOutput(): set sinkId for AudioContext`);
+                        } catch (error) {
+                            console.error(`SetAudioOutput(): failed to set sinkId for AudioContext`, error);
+                        }
+                    }
+                }
+
+                function IsMediaPlaying() {
+                    var playing = false;
+                    const mediaElements = document.querySelectorAll('audio, video');
+                    for (const element of mediaElements) {
+                        if (!element.paused) {
+                            playing = true;
+                            break;
+                        }
+                    }
+
+                    return playing;
+                }
             ";
 
             await coreWebView2.ExecuteScriptAsync(script);
@@ -162,39 +228,19 @@ namespace WebView2Browser
         /// <summary>
         /// 
         /// </summary>
-        /// <param name="deviceId"></param>
-        private async void SetAudioOutput(string deviceId)
+        private async void EnumerateAudioDevices()
         {
-            string script = $@"
-                async function setAllMediaSinkId(sinkId) {{
-                    console.log(`SetAudioOutput(): checkpoint 1 -- setting element tags to deviceId ${{sinkId}}`);
+            string script = @"EnumerateAudioDevices();";
+            await coreWebView2.ExecuteScriptAsync(script);
+        }
 
-                    const mediaElements = document.querySelectorAll('audio, video');
-                    for (const element of mediaElements) {{
-                        try {{
-                            await element.setSinkId(sinkId);
-                            console.log(`SetAudioOutput(): set sinkId for element: ${{element.tagName}}`);
-                        }} catch (error) {{
-                            console.error(`SetAudioOutput(): failed to set sinkId for element: ${{element.tagName}}`, error);
-                        }}
-                    }}
-
-                    console.log(`SetAudioOutput(): checkpoint 2 -- setting window context to deviceId ${{sinkId}}`);
-
-                    if (window.AudioContext) {{
-                        const audioContext = new AudioContext();
-                        try {{
-                            await audioContext.setSinkId(sinkId);
-                            console.log(`SetAudioOutput(): set sinkId for AudioContext`);
-                        }} catch (error) {{
-                            console.error(`SetAudioOutput(): failed to set sinkId for AudioContext`, error);
-                        }}
-                    }}
-                }}
-
-                setAllMediaSinkId('{deviceId}');
-            ";
-
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="deviceLabel"></param>
+        private async void SetDeviceLabel(string deviceLabel)
+        {
+            string script = $@"SetDeviceLabel('{deviceLabel}');";
             await coreWebView2.ExecuteScriptAsync(script);
         }
 
@@ -230,22 +276,7 @@ namespace WebView2Browser
         /// <returns></returns>
         private async Task<string> IsAudioPlaying()
         {
-            string script = @"
-                function isMediaPlaying() {
-                    var playing = false;
-                    const mediaElements = document.querySelectorAll('audio, video');
-                    for (const element of mediaElements) {
-                        if (!element.paused) {
-                            playing = true;
-                            break;
-                        }
-                    }
-
-                    return playing;
-                }
-                isMediaPlaying();
-            ";
-
+            string script = @"IsMediaPlaying();";
             return await coreWebView2.ExecuteScriptAsync(script);
         }
 
@@ -294,37 +325,10 @@ namespace WebView2Browser
         private void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
             string ipcMessage = e.TryGetWebMessageAsString();
-            if (ipcMessage.StartsWith("INTERNAL_AUDIO_DEVICES_LIST:"))
-            {
-                string json = ipcMessage.Substring("INTERNAL_AUDIO_DEVICES_LIST:".Length);
-                audioOutputs = JsonSerializer.Deserialize<List<MediaDeviceInfo>>(json);
-
-                // determine the default device so we can fallback on that
-                foreach (MediaDeviceInfo device in audioOutputs)
-                    if (device.deviceId == "default")
-                    {
-                        defaultMediaDevice = device;
-                        break;
-                    }
-
-                // lets try to set the audio output device on all media elements
-                MediaDeviceInfo selectedDevice = defaultMediaDevice;
-                foreach (MediaDeviceInfo device in audioOutputs)
-                {
-                    if ((device.label.ToLowerInvariant().Contains(Program.WaveOutDevice.ToLowerInvariant())) ||
-                        device.deviceId.ToLowerInvariant() == Program.WaveOutDevice.ToLowerInvariant())
-                    {
-                        selectedDevice = device;
-                        break;
-                    }
-                }
-
-                SetAudioOutput(selectedDevice.deviceId);
-            }
-            else if (ipcMessage.StartsWith("INTERNAL_FORCE_REFRESH"))
-            {
+            if (ipcMessage.StartsWith("INTERNAL_FORCE_REFRESH"))
                 TriggerPageRefresh();
-            }
+            else if (ipcMessage.StartsWith("INTERNAL_RESET_AUDIO_DEVICE"))
+                EnumerateAudioDevices();
         }
 
         /// <summary>
@@ -334,8 +338,11 @@ namespace WebView2Browser
         /// <param name="e"></param>
         private void CoreWebView2_DOMContentLoaded(object? sender, CoreWebView2DOMContentLoadedEventArgs e)
         {
-            ForcePageScrollback();
+            CreateGlobalFunctions();
+            SetDeviceLabel(Program.WaveOutDevice);
+
             EnumerateAudioDevices();
+            ForcePageScrollback();
             JavascriptGC();
             AudioPlaybackWatchdog();
 
@@ -405,20 +412,5 @@ namespace WebView2Browser
                 TriggerPageRefresh();
             });
         }
-    }
-
-    /// <summary>
-    /// JSON MediaDeviceInfo
-    /// </summary>
-    public class MediaDeviceInfo
-    {
-        [JsonPropertyName("deviceId")]
-        public string deviceId { get; set; }
-        [JsonPropertyName("kind")]
-        public string kind { get; set; }
-        [JsonPropertyName("label")]
-        public string label { get; set; }
-        [JsonPropertyName("groupId")]
-        public string groupId { get; set; }
     }
 }
