@@ -94,8 +94,9 @@ namespace WebView2Browser
                             console.log(`AudioPlaybackWatchdog(): warning, last audio playback at ${lastPlayedTime}, will refresh in ${inactivityThreshold / 2}s`);
                         }
 
-                        if (now - lastPlayedTime > inactivityThreshold && !element.paused) {
-                            window.location.reload();
+                        if (now - lastPlayedTime > inactivityThreshold && element.paused) {
+                            // send IPC message
+                            window.chrome.webview.postMessage('INTERNAL_FORCE_REFRESH');
                         }
                     }, 1000); // Check every second
                 }
@@ -320,6 +321,10 @@ namespace WebView2Browser
 
                 SetAudioOutput(selectedDevice.deviceId);
             }
+            else if (ipcMessage.StartsWith("INTERNAL_FORCE_REFRESH"))
+            {
+                TriggerPageRefresh();
+            }
         }
 
         /// <summary>
@@ -393,7 +398,7 @@ namespace WebView2Browser
                 refreshTimer.AutoReset = true;
                 refreshTimer.Start();
 
-                numberOfPageLoads++;
+                numberOfPageLoads = 0;
                 lastPageLoad = DateTime.Now;
 
                 defermentCount = 0;
