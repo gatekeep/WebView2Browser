@@ -117,15 +117,16 @@ namespace WebView2Browser
         {
             string script = @"
                 var localDeviceLabel = 'default';
+                var currentDeviceSinkId = null;
 
                 async function SetDeviceLabel(label) {
                     localDeviceLabel = label.toLowerCase();
-                    console.log(`SetDeviceLabel(): checkpoint 1 -- setting device label to ${localDeviceLabel}`);
+                    console.log(`SetDeviceLabel(): setting device label to ${localDeviceLabel}`);
                 }
 
                 async function EnumerateAudioDevices() {
                     try {
-                        console.log(`EnumerateAudioDevices(): checkpoint 1 -- request microphone permissions`);
+                        console.log(`EnumerateAudioDevices(): request microphone permissions`);
 
                         var sinkId = null;
 
@@ -134,42 +135,49 @@ namespace WebView2Browser
                             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                             stream.getTracks().forEach(track => track.stop());
                         } catch (err) {
-                            console.warn('Audio permission denied, only default devices available:', err);
+                            console.warn('EnumerateAudioDevices(): audio permission denied, only default devices available:', err);
                         }
 
-                        console.log(`EnumerateAudioDevices(): checkpoint 2 -- enumerate system devices`);
+                        console.log(`EnumerateAudioDevices(): enumerate system devices`);
 
                         const devices = await navigator.mediaDevices.enumerateDevices();
                         if (devices == undefined || devices == null) {
                             console.error('Failure to enumerate audio devices!');
+                            return false;
                         }
 
                         const audioOutputs = devices.filter(device => device.kind === 'audiooutput');
                         if (audioOutputs == undefined || audioOutputs == null) {
-                            console.error('Failure to enumerate audio devices!');
+                            console.error('EnumerateAudioDevices(): failure to enumerate audio devices!');
+                            return false;
                         }
 
                         if (audioOutputs.length == 0) {
-                            console.error('No output audio devices!');
+                            console.error('EnumerateAudioDevices(): no output audio devices!');
+                            return false;
                         }
 
-                        console.log(`EnumerateAudioDevices(): checkpoint 3 -- process device list, ${audioOutputs.length} devices`);
+                        console.log(`EnumerateAudioDevices(): process device list, ${audioOutputs.length} devices`);
                         for (const device of audioOutputs) {
                             const deviceLabel = device.label.toLowerCase();
                             const deviceId = device.deviceId.toLowerCase();
                             if (deviceLabel.includes(localDeviceLabel) || deviceId.includes(localDeviceLabel)) {
-                                console.log(`EnumerateAudioDevices(): checkpoint 4 -- found device ${localDeviceLabel}, deviceId ${device.deviceId}, setting audio output`);
+                                console.log(`EnumerateAudioDevices(): found device ${localDeviceLabel}, deviceId ${device.deviceId}, setting audio output`);
                                 sinkId = device.deviceId;
                                 break;
                             }
                         }
 
                         if (sinkId == null) {
-                            console.error(`EnumerateAudioDevices(): checkpoint 4 -- failed to find device ${localDeviceLabel}!!!`);
+                            console.error(`EnumerateAudioDevices(): failed to find device ${localDeviceLabel}!!!`);
                             return false;
                         }
 
-                        await SetAudioOutput(sinkId);
+                        if (sinkId != currentDeviceSinkId) {
+                            await SetAudioOutput(sinkId);
+                        } else {
+                            console.log(`EnumerateAudioDevices(): current deviceId already set; skipped setting`);
+                        }
 
                         return true;
                     } catch (err) {
@@ -183,7 +191,9 @@ namespace WebView2Browser
                         return;
                     }
 
-                    console.log(`SetAudioOutput(): checkpoint 1 -- setting element tags to deviceId ${sinkId}`);
+                    currentDeviceSinkId = sinkId;
+
+                    console.log(`SetAudioOutput(): setting element tags to deviceId ${sinkId}`);
 
                     const mediaElements = document.querySelectorAll('audio, video');
                     for (const element of mediaElements) {
@@ -195,7 +205,7 @@ namespace WebView2Browser
                         }
                     }
 
-                    console.log(`SetAudioOutput(): checkpoint 2 -- setting window context to deviceId ${sinkId}`);
+                    console.log(`SetAudioOutput(): setting window context to deviceId ${sinkId}`);
 
                     if (window.AudioContext) {
                         const audioContext = new AudioContext();
@@ -288,7 +298,6 @@ namespace WebView2Browser
             // clear cache and refresh
             Invoke(async () =>
             {
-                await coreWebView2.Profile.ClearBrowsingDataAsync();
                 JavascriptGC();
                 coreWebView2.Reload();
 
@@ -409,6 +418,8 @@ namespace WebView2Browser
                 lastPageLoad = DateTime.Now;
 
                 defermentCount = 0;
+                
+                await coreWebView2.Profile.ClearBrowsingDataAsync();
                 TriggerPageRefresh();
             });
         }
