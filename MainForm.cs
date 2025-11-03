@@ -40,6 +40,9 @@ namespace WebView2Browser
 
         private int defermentCount = 0;
 
+        private int numberOfPageLoads = 0;
+        private DateTime lastPageLoad = DateTime.Now;
+
         /*
         ** Methods
         */
@@ -329,6 +332,9 @@ namespace WebView2Browser
             EnumerateAudioDevices();
             JavascriptGC();
             AudioPlaybackWatchdog();
+
+            numberOfPageLoads++;
+            lastPageLoad = DateTime.Now;
         }
 
         /// <summary>
@@ -338,7 +344,7 @@ namespace WebView2Browser
         /// <param name="e"></param>
         private void CoreWebView2_DocumentTitleChanged(object? sender, object e)
         {
-            Invoke(() => this.Text = controlWebView2.CoreWebView2.DocumentTitle);
+            Invoke(() => this.Text = $"{controlWebView2.CoreWebView2.DocumentTitle} (Page loaded {lastPageLoad.ToString()}, {numberOfPageLoads} loads)");
         }
 
         /// <summary>
