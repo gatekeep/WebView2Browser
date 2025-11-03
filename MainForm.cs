@@ -93,7 +93,8 @@ namespace WebView2Browser
                             inactivityWarning = true;
                             console.log(`AudioPlaybackWatchdog(): warning, last audio playback at ${lastPlayedTime}, will refresh in ${inactivityThreshold / 2}s`);
                         }
-                        if (now - lastPlayedTime > inactivityThreshold && !element.paused && !element.ended) {
+
+                        if (now - lastPlayedTime > inactivityThreshold && !element.paused) {
                             window.location.reload();
                         }
                     }, 1000); // Check every second
