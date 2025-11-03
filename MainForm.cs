@@ -335,6 +335,8 @@ namespace WebView2Browser
 
             numberOfPageLoads++;
             lastPageLoad = DateTime.Now;
+
+            Invoke(() => this.Text = $"{controlWebView2.CoreWebView2.DocumentTitle} (loaded on {lastPageLoad.ToString()}, {numberOfPageLoads} loads)");
         }
 
         /// <summary>
@@ -344,7 +346,7 @@ namespace WebView2Browser
         /// <param name="e"></param>
         private void CoreWebView2_DocumentTitleChanged(object? sender, object e)
         {
-            Invoke(() => this.Text = $"{controlWebView2.CoreWebView2.DocumentTitle} (Page loaded {lastPageLoad.ToString()}, {numberOfPageLoads} loads)");
+            Invoke(() => this.Text = $"{controlWebView2.CoreWebView2.DocumentTitle} (loaded on {lastPageLoad.ToString()}, {numberOfPageLoads} loads)");
         }
 
         /// <summary>
@@ -389,6 +391,9 @@ namespace WebView2Browser
                 refreshTimer.Interval = TimeSpan.FromMinutes(Program.AutoRefresh).TotalMilliseconds;
                 refreshTimer.AutoReset = true;
                 refreshTimer.Start();
+
+                numberOfPageLoads++;
+                lastPageLoad = DateTime.Now;
 
                 defermentCount = 0;
                 TriggerPageRefresh();
