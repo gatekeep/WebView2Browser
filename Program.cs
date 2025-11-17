@@ -90,6 +90,15 @@ namespace WebView2Browser
         }
 
         /// <summary>
+        /// Gets or sets the user profile path.
+        /// </summary>
+        public static string UserProfilePath
+        {
+            get;
+            set;
+        }
+
+        /// <summary>
         /// Gets or sets a flag indicating the dev tool should be shown.
         /// </summary>
         public static bool ShowDevTools
@@ -171,6 +180,8 @@ namespace WebView2Browser
                 { "force-refresh-after=", "force refresh browser after specified number of deferments", v => maxDeferredRefreshString = v },
 
                 { "url=", "startup URL", v => StartupUrl = v },
+
+                { "upp=", "user profile path", v => UserProfilePath = v },
             };
 
             // attempt to parse the commandline
@@ -256,11 +267,18 @@ namespace WebView2Browser
                 Environment.Exit((int)ERRNO.EBADOPTIONS);
             }
 
+            if (UserProfilePath == string.Empty)
+            {
+                Console.WriteLine("error: no user data profile path specified!");
+                Usage(options);
+                Environment.Exit((int)ERRNO.EBADOPTIONS);
+            }
+
             // To customize application configuration such as set high DPI settings or default font,
             // see https://aka.ms/applicationconfiguration.
             ApplicationConfiguration.Initialize();
 
-            Environment.SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--allow-insecure-localhost --unsafely-treat-insecure-origin-as-secure --enable-media-stream=1 --autoplay-policy=no-user-gesture-required");
+            Environment.SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-web-security --allow-insecure-localhost --unsafely-treat-insecure-origin-as-secure --enable-media-stream=1 --autoplay-policy=no-user-gesture-required");
 
             Application.Run(new MainForm());
         }

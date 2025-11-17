@@ -52,11 +52,25 @@ namespace WebView2Browser
         public MainForm()
         {
             InitializeComponent();
+            InitializeWebView2Async();
 
             // hook events
             this.Shown += MainForm_Shown;
 
             controlWebView2.CoreWebView2InitializationCompleted += WebView2_CoreWebView2InitializationCompleted;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        private async void InitializeWebView2Async()
+        {
+            var options = new CoreWebView2EnvironmentOptions("--disable-web-security --allow-insecure-localhost --unsafely-treat-insecure-origin-as-secure --enable-media-stream=1 --autoplay-policy=no-user-gesture-required");
+            string userDataFolder = Path.Combine(Application.StartupPath, Program.UserProfilePath);
+
+            CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, userDataFolder, options);
+
+            await controlWebView2.EnsureCoreWebView2Async(environment);
         }
 
         /// <summary>
@@ -99,7 +113,7 @@ namespace WebView2Browser
                             console.log(`AudioPlaybackWatchdog(): warning, last audio playback at ${lastPlayedTime}, will refresh in ${inactivityThreshold / 2}s`);
                         }
 
-                        if (now - lastPlayedTime > inactivityThreshold && element.paused) {
+                        if (now - lastPlayedTime > inactivityThreshold) {
                             // send IPC message
                             window.chrome.webview.postMessage('INTERNAL_FORCE_REFRESH');
                         }
@@ -320,9 +334,26 @@ namespace WebView2Browser
                     coreWebView2.OpenDevToolsWindow();
 
                 // hook events
+                coreWebView2.PermissionRequested += CoreWebView2_PermissionRequested;
                 coreWebView2.DocumentTitleChanged += CoreWebView2_DocumentTitleChanged;
                 coreWebView2.DOMContentLoaded += CoreWebView2_DOMContentLoaded;
                 coreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
+            }
+        }
+
+        /// <summary>
+        /// Event that occurs when the web page asks for media permission.
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        /// <exception cref="NotImplementedException"></exception>
+        private void CoreWebView2_PermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+        {
+            // always allow media permissions
+            if (e.PermissionKind == CoreWebView2PermissionKind.Microphone)
+            {
+                e.State = CoreWebView2PermissionState.Allow;
+                e.Handled = true;
             }
         }
 
@@ -348,12 +379,18 @@ namespace WebView2Browser
         private void CoreWebView2_DOMContentLoaded(object? sender, CoreWebView2DOMContentLoadedEventArgs e)
         {
             CreateGlobalFunctions();
-            SetDeviceLabel(Program.WaveOutDevice);
 
-            EnumerateAudioDevices();
+            if (Program.WaveOutDevice != "default")
+            {
+                SetDeviceLabel(Program.WaveOutDevice);
+                EnumerateAudioDevices();
+            }
+            
             ForcePageScrollback();
             JavascriptGC();
-            AudioPlaybackWatchdog();
+
+            if (Program.WaveOutDevice != "default")
+                AudioPlaybackWatchdog();
 
             numberOfPageLoads++;
             lastPageLoad = DateTime.Now;
