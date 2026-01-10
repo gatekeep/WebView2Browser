@@ -84,6 +84,29 @@ namespace WebView2Browser
                 const inactivityThreshold = 300000;
 
                 const mediaElements = document.querySelectorAll('audio');
+                if (mediaElements == undefined) {
+                    console.error('AudioPlaybackWatchdog(): no DOM audio elements found on page!');
+                    mediaElements = [];
+                }
+
+                const openShadowRoots = findAllShadowRoots(document);
+                for (const shadowRoot of openShadowRoots) {
+                    const shadowMediaElements = shadowRoot.querySelectorAll('audio');
+                    if (shadowMediaElements != undefined && shadowMediaElements.length > 0) {
+                        console.log(shadowMediaElements.length + ' audio elements found in shadow root, adding to watchdog');
+                        for (const element of shadowMediaElements) {
+                            mediaElements.push(element);
+                        }
+                    }
+                }
+
+                if (mediaElements.length == 0) {
+                    console.error('AudioPlaybackWatchdog(): no audio elements found on page!');
+                    return;
+                }
+
+                console.log(`AudioPlaybackWatchdog(): monitoring ${mediaElements.length} audio elements for playback inactivity`);
+
                 for (const element of mediaElements) {
                     element.addEventListener('timeupdate', () => {
                         lastPlayedTime = Date.now();
@@ -132,6 +155,20 @@ namespace WebView2Browser
             string script = @"
                 var localDeviceLabel = 'default';
                 var currentDeviceSinkId = null;
+
+                function findAllShadowRoots(node) {
+                    const allElements = Array.from(node.querySelectorAll('*'));
+                    let shadowRoots = [];
+
+                    allElements.forEach(element => {
+                        if (element.shadowRoot && element.shadowRoot.mode === 'open') {
+                            shadowRoots.push(element.shadowRoot);
+                            shadowRoots = shadowRoots.concat(findAllShadowRoots(element.shadowRoot));
+                        }
+                    });
+
+                    return shadowRoots;
+                }
 
                 async function SetDeviceLabel(label) {
                     localDeviceLabel = label.toLowerCase();
@@ -219,6 +256,21 @@ namespace WebView2Browser
                         }
                     }
 
+                    console.log(`SetAudioOutput(): setting shadow root element tags to deviceId ${sinkId}`);
+
+                    const openShadowRoots = findAllShadowRoots(document);
+                    for (const shadowRoot of openShadowRoots) {
+                        const shadowMediaElements = shadowRoot.querySelectorAll('audio, video');
+                        for (const element of shadowMediaElements) {
+                            try {
+                                await element.setSinkId(sinkId);
+                                console.log(`SetAudioOutput(): set sinkId for shadow element: ${element.tagName}`);
+                            } catch (error) {
+                                console.error(`SetAudioOutput(): failed to set sinkId for shadow element: ${element.tagName}`, error);
+                            }
+                        }
+                    }
+
                     console.log(`SetAudioOutput(): setting window context to deviceId ${sinkId}`);
 
                     if (window.AudioContext) {
@@ -239,6 +291,22 @@ namespace WebView2Browser
                         if (!element.paused) {
                             playing = true;
                             break;
+                        }
+                    }
+
+                    if (!playing) {
+                        const openShadowRoots = findAllShadowRoots(document);
+                        for (const shadowRoot of openShadowRoots) {
+                            const shadowMediaElements = shadowRoot.querySelectorAll('audio, video');
+                            for (const element of shadowMediaElements) {
+                                if (!element.paused) {
+                                    playing = true;
+                                    break;
+                                }
+                            }
+
+                            if (playing)
+                                break;
                         }
                     }
 
@@ -289,6 +357,40 @@ namespace WebView2Browser
             string script = @"
                 console.log(`JavascriptGC(): forcing javascript garbage collection`);
                 window.gc();
+            ";
+
+            await coreWebView2.ExecuteScriptAsync(script);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        private async void CheckAndHookShadowRoot()
+        {
+            string script = @"
+                console.log(`CheckAndHookShadowRoot(): checking for shadow DOM roots to hook`);
+                const openShadowRoots = findAllShadowRoots(document);
+                for (const shadowRoot of openShadowRoots) {
+                    const shadowHost = shadowRoot.host;
+                    console.log(`CheckAndHookShadowRoot(): shadow root host element: ${shadowHost.tagName}`);
+
+                    const shadowHostParent = shadowHost.parentElement.parentElement;
+                    if (shadowHostParent) {
+                        console.log(`CheckAndHookShadowRoot(): shadow root host parent element: ${shadowHostParent.tagName} ${shadowHostParent.class}`);
+
+                        const observer = new MutationObserver(function(mutations) {
+                            mutations.forEach(function(mutation) {
+                                console.log(`CheckAndHookShadowRoot(): mutation observed in shadow root: ${mutation.type}`);
+
+                                if (mutation.type === 'childList') {
+                                    SetAudioOutput(currentDeviceSinkId);
+                                }
+                            });
+                        });
+
+                        observer.observe(shadowHostParent, { attributes: true, childList: true, subtree: true, characterData: true });
+                    }
+                }
             ";
 
             await coreWebView2.ExecuteScriptAsync(script);
@@ -384,6 +486,7 @@ namespace WebView2Browser
             {
                 SetDeviceLabel(Program.WaveOutDevice);
                 EnumerateAudioDevices();
+                CheckAndHookShadowRoot();
             }
             
             ForcePageScrollback();
