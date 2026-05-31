@@ -79,6 +79,8 @@ namespace WebView2Browser
         private async void AudioPlaybackWatchdog()
         {
             string script = @"
+                console.log(`AudioPlaybackWatchdog(): checkpoint 1`);
+
                 var lastPlayedTime = Date.now();
                 var inactivtyWarning = false;
                 const inactivityThreshold = 300000;
@@ -114,6 +116,26 @@ namespace WebView2Browser
                     });
 
                     element.addEventListener('play', () => {
+                        if (BROADCASTIFY_MODE && AUDIO_HAS_CHANGED) {
+                            try {
+                                console.log(`AudioPlaybackWatchdog(): stopping current audio playback, source changed ${newSrc}`);
+                                element.pause();
+                            } catch (err) { 
+                                console.error('AudioPlaybackWatchdog(): Error pausing audio after src change:', err);
+                            }
+
+                            SetAudioOutput(currentDeviceSinkId);
+
+                            try {
+                                console.log(`AudioPlaybackWatchdog(): resuming current audio playback, source changed ${newSrc}`);
+                                element.resume();
+                            } catch (err) { 
+                                console.error('AudioPlaybackWatchdog(): Error resuming audio after src change:', err);
+                            }
+
+                            AUDIO_HAS_CHANGED = false;
+                        }
+
                         // send IPC message
                         window.chrome.webview.postMessage('INTERNAL_RESET_AUDIO_DEVICE');
 
@@ -212,6 +234,7 @@ namespace WebView2Browser
                         for (const device of audioOutputs) {
                             const deviceLabel = device.label.toLowerCase();
                             const deviceId = device.deviceId.toLowerCase();
+                            console.debug(`EnumerateAudioDevices(): device ${deviceLabel}, deviceId ${device.deviceId}`);
                             if (deviceLabel.includes(localDeviceLabel) || deviceId.includes(localDeviceLabel)) {
                                 console.log(`EnumerateAudioDevices(): found device ${localDeviceLabel}, deviceId ${device.deviceId}, setting audio output`);
                                 sinkId = device.deviceId;
@@ -249,10 +272,11 @@ namespace WebView2Browser
                     const mediaElements = document.querySelectorAll('audio, video');
                     for (const element of mediaElements) {
                         try {
+                            console.log(`SetAudioOutput(): sinkId for element: ${element.tagName} ${element.id} ${element.sinkId}`);
                             await element.setSinkId(sinkId);
-                            console.log(`SetAudioOutput(): set sinkId for element: ${element.tagName}`);
+                            console.log(`SetAudioOutput(): set sinkId for element: ${element.tagName} ${element.id} ${element.sinkId}`);
                         } catch (error) {
-                            console.error(`SetAudioOutput(): failed to set sinkId for element: ${element.tagName}`, error);
+                            console.error(`SetAudioOutput(): failed to set sinkId for element: ${element.tagName} ${element.id}`, error);
                         }
                     }
 
@@ -264,9 +288,9 @@ namespace WebView2Browser
                         for (const element of shadowMediaElements) {
                             try {
                                 await element.setSinkId(sinkId);
-                                console.log(`SetAudioOutput(): set sinkId for shadow element: ${element.tagName}`);
+                                console.log(`SetAudioOutput(): set sinkId for shadow element: ${element.tagName} ${element.id} ${element.sinkId}`);
                             } catch (error) {
-                                console.error(`SetAudioOutput(): failed to set sinkId for shadow element: ${element.tagName}`, error);
+                                console.error(`SetAudioOutput(): failed to set sinkId for shadow element: ${element.tagName} ${element.id}`, error);
                             }
                         }
                     }
@@ -274,12 +298,24 @@ namespace WebView2Browser
                     console.log(`SetAudioOutput(): setting window context to deviceId ${sinkId}`);
 
                     if (window.AudioContext) {
-                        const audioContext = new AudioContext();
+                        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                         try {
                             await audioContext.setSinkId(sinkId);
-                            console.log(`SetAudioOutput(): set sinkId for AudioContext`);
+                            console.log(`SetAudioOutput(): set sinkId for AudioContext ${audioContext.sinkId}`);
                         } catch (error) {
                             console.error(`SetAudioOutput(): failed to set sinkId for AudioContext`, error);
+                        }
+                    }
+
+                    if (BROADCASTIFY_MODE && wvAudioPlayer) {
+                        try {
+                            if (wvAudioPlayer.sinkId !== currentDeviceSinkId) {
+                                console.log(`SetAudioOutput(): sinkId for element: ${wvAudioPlayer.tagName} ${wvAudioPlayer.id} ${wvAudioPlayer.sinkId}`);
+                                await wvAudioPlayer.setSinkId(currentDeviceSinkId);
+                                console.log(`SetAudioOutput(): set sinkId for element: ${wvAudioPlayer.tagName} ${wvAudioPlayer.id} ${wvAudioPlayer.sinkId}`);
+                            }
+                        } catch (error) {
+                            console.error(`SetAudioOutput(): failed to set sinkId for element: ${wvAudioPlayer.tagName} ${wvAudioPlayer.id}`, error);
                         }
                     }
                 }
@@ -399,6 +435,43 @@ namespace WebView2Browser
         /// <summary>
         /// 
         /// </summary>
+        private async void HookAudioObserver()
+        {
+            string script = @"
+                const BROADCASTIFY_MODE = true;
+
+                console.log(`HookAudioObserver(): BROADCASTIFY_MODE`);
+                console.log(`HookAudioObserver(): creating shadow audio tag`);
+                const wvAudioPlayer = document.createElement('audio');
+                wvAudioPlayer.id = 'shadow-audio-player';
+
+                console.log(`HookAudioObserver(): hooking audio tag for changes`);
+
+                const audioElement = document.getElementById('call_audio_player');
+                const observer = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(mutation) {
+                        console.log(`HookAudioObserver(): mutation observed in audio tag: ${mutation.type}`);
+
+                        if (mutation.type === 'attributes' && mutation.attributeName === 'src') {
+                            const newSrc = audioElement.getAttribute('src');
+                            console.log(`HookAudioObserver(): audio source changed ${newSrc}`);
+                            SetAudioOutput(currentDeviceSinkId);
+                            wvAudioPlayer.src = newSrc;
+                            wvAudioPlayer.play();
+                        }
+                    });
+                });
+
+                observer.observe(audioElement, { attributes: true });
+                document.getElementById('statebutton').click();
+            ";
+
+            await coreWebView2.ExecuteScriptAsync(script);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
         /// <returns></returns>
         private async Task<string> IsAudioPlaying()
         {
@@ -488,8 +561,12 @@ namespace WebView2Browser
                 EnumerateAudioDevices();
                 CheckAndHookShadowRoot();
             }
-            
-            ForcePageScrollback();
+
+            if (Program.BroadcastifyMode)
+                HookAudioObserver();
+
+            if (!Program.BroadcastifyMode)
+                ForcePageScrollback();
             JavascriptGC();
 
             if (Program.WaveOutDevice != "default")

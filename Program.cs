@@ -99,6 +99,15 @@ namespace WebView2Browser
         }
 
         /// <summary>
+        /// Gets or sets a flag indicating WebView2Browser is operating in Broadcastify mode, which is a special mode that optimizes the browser for use with Broadcastify's streaming platform.
+        /// </summary>
+        public static bool BroadcastifyMode
+        {
+            get;
+            set;
+        }
+
+        /// <summary>
         /// Gets or sets a flag indicating the dev tool should be shown.
         /// </summary>
         public static bool ShowDevTools
@@ -173,6 +182,7 @@ namespace WebView2Browser
             {
                 { "h|help", "show this message and exit", v => showHelp = v != null },
                 { "d", "show browser DevTools", v => ShowDevTools = v != null },
+                { "broadcastify", "broadcastify mode", v => BroadcastifyMode = v != null },
 
                 { "o=|output-device=", "audio output device", v => WaveOutDevice = v },
 
