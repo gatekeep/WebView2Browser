@@ -478,6 +478,18 @@ namespace WebView2Browser
         /// <summary>
         /// 
         /// </summary>
+        private async void DisableBroadcastify()
+        {
+            string script = @"
+                const BROADCASTIFY_MODE = false;
+            ";
+
+            await coreWebView2.ExecuteScriptAsync(script);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
         /// <returns></returns>
         private async Task<string> IsAudioPlaying()
         {
@@ -576,6 +588,8 @@ namespace WebView2Browser
 
             if (Program.BroadcastifyMode)
                 HookAudioObserver();
+            else
+                DisableBroadcastify();
 
             if (!Program.BroadcastifyMode)
                 ForcePageScrollback();
