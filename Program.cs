@@ -134,6 +134,15 @@ namespace WebView2Browser
             set;
         }
 
+        /// <summary>
+        /// Gets or sets the ability for the tool to refresh the page automatically.
+        /// </summary>
+        public static bool DisableRefresh
+        {
+            get;
+            set;
+        }
+
         /*
         ** Methods
         */
@@ -183,6 +192,7 @@ namespace WebView2Browser
                 { "h|help", "show this message and exit", v => showHelp = v != null },
                 { "d", "show browser DevTools", v => ShowDevTools = v != null },
                 { "broadcastify", "broadcastify mode", v => BroadcastifyMode = v != null },
+                { "disable-refresh", "disable auto-refresh support", v => DisableRefresh = v != null },
 
                 { "o=|output-device=", "audio output device", v => WaveOutDevice = v },
 

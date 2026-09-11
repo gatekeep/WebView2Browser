@@ -448,6 +448,8 @@ namespace WebView2Browser
                 console.log(`HookAudioObserver(): hooking audio tag for changes`);
 
                 const audioElement = document.getElementById('call_audio_player');
+                audioElement.addEventListener('play', () => { audioElement.pause(); audioElement.currentTime = 0; });
+
                 const observer = new MutationObserver(function(mutations) {
                     mutations.forEach(function(mutation) {
                         console.log(`HookAudioObserver(): mutation observed in audio tag: ${mutation.type}`);
@@ -457,7 +459,11 @@ namespace WebView2Browser
                             console.log(`HookAudioObserver(): audio source changed ${newSrc}`);
                             SetAudioOutput(currentDeviceSinkId);
                             wvAudioPlayer.src = newSrc;
-                            wvAudioPlayer.play();
+                            try {
+                                wvAudioPlayer.play();
+                            } catch (error) {
+                                console.error(`HookAudioObserver(): shadow-audio-player play() interrupt`, error);
+                            }
                         }
                     });
                 });
@@ -484,6 +490,9 @@ namespace WebView2Browser
         /// </summary>
         private void TriggerPageRefresh()
         {
+            if (Program.DisableRefresh)
+                return;
+
             // clear cache and refresh
             Invoke(async () =>
             {
@@ -508,6 +517,8 @@ namespace WebView2Browser
                 if (Program.ShowDevTools)
                     coreWebView2.OpenDevToolsWindow();
 
+                coreWebView2.Settings.IsPasswordAutosaveEnabled = true;
+
                 // hook events
                 coreWebView2.PermissionRequested += CoreWebView2_PermissionRequested;
                 coreWebView2.DocumentTitleChanged += CoreWebView2_DocumentTitleChanged;
@@ -525,7 +536,8 @@ namespace WebView2Browser
         private void CoreWebView2_PermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
         {
             // always allow media permissions
-            if (e.PermissionKind == CoreWebView2PermissionKind.Microphone)
+            if (e.PermissionKind == CoreWebView2PermissionKind.Microphone ||
+                e.PermissionKind == CoreWebView2PermissionKind.Camera)
             {
                 e.State = CoreWebView2PermissionState.Allow;
                 e.Handled = true;
@@ -613,16 +625,19 @@ namespace WebView2Browser
         /// <param name="e"></param>
         private void OnRefreshTimedEvent(object source, ElapsedEventArgs e)
         {
+            if (Program.DisableRefresh)
+                return;
+
             // clear cache and refresh
             Invoke(async () => {
                 string isPlaying = await IsAudioPlaying();
                 if (isPlaying == "true" && defermentCount < Program.MaxDeferredBeforeRefresh)
                 {
-                    refreshTimer.Interval = TimeSpan.FromSeconds(15).TotalMilliseconds;
+                    refreshTimer.Interval = TimeSpan.FromSeconds(30).TotalMilliseconds;
                     refreshTimer.AutoReset = true;
                     refreshTimer.Start();
 
-                    await coreWebView2.ExecuteScriptAsync(@"console.log(`OnRefreshTimedEvent(): audio active -- skipping refresh for 15 seconds`)");
+                    await coreWebView2.ExecuteScriptAsync(@"console.log(`OnRefreshTimedEvent(): audio active -- skipping refresh for 30 seconds`)");
                     defermentCount++;
                     return;
                 }
@@ -636,7 +651,7 @@ namespace WebView2Browser
 
                 defermentCount = 0;
                 
-                await coreWebView2.Profile.ClearBrowsingDataAsync();
+                //await coreWebView2.Profile.ClearBrowsingDataAsync();
                 TriggerPageRefresh();
             });
         }
