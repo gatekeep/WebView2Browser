@@ -71,6 +71,7 @@ namespace WebView2Browser
     /// </summary>
     internal static class Program
     {
+        public static bool ManagerMode { get; private set; }
         /// <summary>
         /// Gets or sets the audio wave in device index.
         /// </summary>
@@ -184,7 +185,7 @@ namespace WebView2Browser
             AutoRefresh = 0;
             MaxDeferredBeforeRefresh = 5;
 
-            ConsoleHelper.AttachParentConsole();
+            if (!args.Contains("--manager")) ConsoleHelper.AttachParentConsole();
 
             // command line parameters
             OptionSet options = new OptionSet()
@@ -192,6 +193,7 @@ namespace WebView2Browser
                 { "h|help", "show this message and exit", v => showHelp = v != null },
                 { "d", "show browser DevTools", v => ShowDevTools = v != null },
                 { "broadcastify", "broadcastify mode", v => BroadcastifyMode = v != null },
+                { "manager", "enable Stream Service Manager health and control", v => ManagerMode = v != null },
                 { "disable-refresh", "disable auto-refresh support", v => DisableRefresh = v != null },
 
                 { "o=|output-device=", "audio output device", v => WaveOutDevice = v },
@@ -280,14 +282,14 @@ namespace WebView2Browser
                 }
             }
 
-            if (StartupUrl == string.Empty)
+            if (string.IsNullOrWhiteSpace(StartupUrl))
             {
                 Console.WriteLine("error: no startup URL specified!");
                 Usage(options);
                 Environment.Exit((int)ERRNO.EBADOPTIONS);
             }
 
-            if (UserProfilePath == string.Empty)
+            if (string.IsNullOrWhiteSpace(UserProfilePath))
             {
                 Console.WriteLine("error: no user data profile path specified!");
                 Usage(options);

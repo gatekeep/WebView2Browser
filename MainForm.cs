@@ -41,6 +41,7 @@ namespace WebView2Browser
         private DateTime lastPageLoad = DateTime.Now;
 
         private bool devicesEnumerated = false;
+        private ManagedBrowserHost? managerHost;
 
         /*
         ** Methods
@@ -58,6 +59,7 @@ namespace WebView2Browser
             this.Shown += MainForm_Shown;
 
             controlWebView2.CoreWebView2InitializationCompleted += WebView2_CoreWebView2InitializationCompleted;
+            if (Program.ManagerMode) managerHost = new ManagedBrowserHost(this, controlWebView2);
         }
 
         /// <summary>
@@ -82,10 +84,10 @@ namespace WebView2Browser
                 console.log(`AudioPlaybackWatchdog(): checkpoint 1`);
 
                 var lastPlayedTime = Date.now();
-                var inactivtyWarning = false;
+                var inactivityWarning = false;
                 const inactivityThreshold = 300000;
 
-                const mediaElements = document.querySelectorAll('audio');
+                let mediaElements = Array.from(document.querySelectorAll('audio'));
                 if (mediaElements == undefined) {
                     console.error('AudioPlaybackWatchdog(): no DOM audio elements found on page!');
                     mediaElements = [];
@@ -118,7 +120,7 @@ namespace WebView2Browser
                     element.addEventListener('play', () => {
                         if (BROADCASTIFY_MODE && AUDIO_HAS_CHANGED) {
                             try {
-                                console.log(`AudioPlaybackWatchdog(): stopping current audio playback, source changed ${newSrc}`);
+                                console.log(`AudioPlaybackWatchdog(): stopping current audio playback after a source change`);
                                 element.pause();
                             } catch (err) { 
                                 console.error('AudioPlaybackWatchdog(): Error pausing audio after src change:', err);
@@ -127,8 +129,8 @@ namespace WebView2Browser
                             SetAudioOutput(currentDeviceSinkId);
 
                             try {
-                                console.log(`AudioPlaybackWatchdog(): resuming current audio playback, source changed ${newSrc}`);
-                                element.resume();
+                                console.log(`AudioPlaybackWatchdog(): resuming current audio playback after a source change`);
+                                element.play().catch(err => console.error('Playback failed', err));
                             } catch (err) { 
                                 console.error('AudioPlaybackWatchdog(): Error resuming audio after src change:', err);
                             }
@@ -172,7 +174,7 @@ namespace WebView2Browser
         /// <summary>
         /// 
         /// </summary>
-        private async void CreateGlobalFunctions()
+        private async Task CreateGlobalFunctions()
         {
             string script = @"
                 var localDeviceLabel = 'default';
@@ -235,7 +237,7 @@ namespace WebView2Browser
                             const deviceLabel = device.label.toLowerCase();
                             const deviceId = device.deviceId.toLowerCase();
                             console.debug(`EnumerateAudioDevices(): device ${deviceLabel}, deviceId ${device.deviceId}`);
-                            if (deviceLabel.includes(localDeviceLabel) || deviceId.includes(localDeviceLabel)) {
+                            if (SSM_MANAGED_MODE ? (deviceLabel === localDeviceLabel || deviceId === localDeviceLabel) : (deviceLabel.includes(localDeviceLabel) || deviceId.includes(localDeviceLabel))) {
                                 console.log(`EnumerateAudioDevices(): found device ${localDeviceLabel}, deviceId ${device.deviceId}, setting audio output`);
                                 sinkId = device.deviceId;
                                 break;
@@ -350,13 +352,13 @@ namespace WebView2Browser
                 }
             ";
 
-            await coreWebView2.ExecuteScriptAsync(script);
+            await coreWebView2.ExecuteScriptAsync("var SSM_MANAGED_MODE = " + (Program.ManagerMode ? "true;" : "false;") + script);
         }
 
         /// <summary>
         /// 
         /// </summary>
-        private async void EnumerateAudioDevices()
+        private async Task EnumerateAudioDevices()
         {
             string script = @"EnumerateAudioDevices();";
             await coreWebView2.ExecuteScriptAsync(script);
@@ -366,9 +368,9 @@ namespace WebView2Browser
         /// 
         /// </summary>
         /// <param name="deviceLabel"></param>
-        private async void SetDeviceLabel(string deviceLabel)
+        private async Task SetDeviceLabel(string deviceLabel)
         {
-            string script = $@"SetDeviceLabel('{deviceLabel}');";
+            string script = "SetDeviceLabel(" + System.Text.Json.JsonSerializer.Serialize(deviceLabel) + ");";
             await coreWebView2.ExecuteScriptAsync(script);
         }
 
@@ -435,7 +437,7 @@ namespace WebView2Browser
         /// <summary>
         /// 
         /// </summary>
-        private async void HookAudioObserver()
+        private async Task HookAudioObserver()
         {
             string script = @"
                 const BROADCASTIFY_MODE = true;
@@ -448,6 +450,7 @@ namespace WebView2Browser
                 console.log(`HookAudioObserver(): hooking audio tag for changes`);
 
                 const audioElement = document.getElementById('call_audio_player');
+                if (audioElement) {
                 audioElement.addEventListener('play', () => { audioElement.pause(); audioElement.currentTime = 0; });
 
                 const observer = new MutationObserver(function(mutations) {
@@ -469,7 +472,8 @@ namespace WebView2Browser
                 });
 
                 observer.observe(audioElement, { attributes: true });
-                document.getElementById('statebutton').click();
+                if (!SSM_MANAGED_MODE) document.getElementById('statebutton')?.click();
+                }
             ";
 
             await coreWebView2.ExecuteScriptAsync(script);
@@ -478,7 +482,7 @@ namespace WebView2Browser
         /// <summary>
         /// 
         /// </summary>
-        private async void DisableBroadcastify()
+        private async Task DisableBroadcastify()
         {
             string script = @"
                 const BROADCASTIFY_MODE = false;
@@ -561,13 +565,13 @@ namespace WebView2Browser
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
-        private void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+        private async void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
             string ipcMessage = e.TryGetWebMessageAsString();
             if (ipcMessage.StartsWith("INTERNAL_FORCE_REFRESH"))
                 TriggerPageRefresh();
             else if (ipcMessage.StartsWith("INTERNAL_RESET_AUDIO_DEVICE"))
-                EnumerateAudioDevices();
+                await EnumerateAudioDevices();
         }
 
         /// <summary>
@@ -575,27 +579,27 @@ namespace WebView2Browser
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
-        private void CoreWebView2_DOMContentLoaded(object? sender, CoreWebView2DOMContentLoadedEventArgs e)
+        private async void CoreWebView2_DOMContentLoaded(object? sender, CoreWebView2DOMContentLoadedEventArgs e)
         {
-            CreateGlobalFunctions();
+            await CreateGlobalFunctions();
+
+            if (Program.BroadcastifyMode)
+                await HookAudioObserver();
+            else
+                await DisableBroadcastify();
 
             if (Program.WaveOutDevice != "default")
             {
-                SetDeviceLabel(Program.WaveOutDevice);
-                EnumerateAudioDevices();
+                await SetDeviceLabel(Program.WaveOutDevice);
+                await EnumerateAudioDevices();
                 CheckAndHookShadowRoot();
             }
-
-            if (Program.BroadcastifyMode)
-                HookAudioObserver();
-            else
-                DisableBroadcastify();
 
             if (!Program.BroadcastifyMode)
                 ForcePageScrollback();
             JavascriptGC();
 
-            if (Program.WaveOutDevice != "default")
+            if (Program.WaveOutDevice != "default" && !Program.ManagerMode)
                 AudioPlaybackWatchdog();
 
             numberOfPageLoads++;
