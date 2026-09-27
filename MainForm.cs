@@ -42,6 +42,7 @@ namespace WebView2Browser
 
         private bool devicesEnumerated = false;
         private ManagedBrowserHost? managerHost;
+        private bool verificationDeferred;
 
         /*
         ** Methods
@@ -512,6 +513,8 @@ namespace WebView2Browser
             // clear cache and refresh
             Invoke(async () =>
             {
+                if (managerHost != null && await managerHost.VerificationRequired())
+                    return;
                 JavascriptGC();
                 coreWebView2.Reload();
 
@@ -648,6 +651,24 @@ namespace WebView2Browser
 
             // clear cache and refresh
             Invoke(async () => {
+                // Leave verification open for the operator; retry the refresh check without reloading.
+                if (managerHost != null && await managerHost.VerificationRequired())
+                {
+                    verificationDeferred = true;
+                    refreshTimer.Interval = TimeSpan.FromSeconds(30).TotalMilliseconds;
+                    refreshTimer.AutoReset = false;
+                    refreshTimer.Start();
+                    return;
+                }
+                if (verificationDeferred)
+                {
+                    // Give the verified page a full refresh interval instead of immediately replacing it.
+                    verificationDeferred = false;
+                    defermentCount = 0;
+                    refreshTimer.Interval = TimeSpan.FromMinutes(Program.AutoRefresh).TotalMilliseconds;
+                    refreshTimer.Start();
+                    return;
+                }
                 string isPlaying = await IsAudioPlaying();
                 if (isPlaying == "true" && defermentCount < Program.MaxDeferredBeforeRefresh)
                 {

@@ -74,6 +74,8 @@ internal sealed class ManagedBrowserHost
         try
         {
             audio.Apply(view.CoreWebView2);
+            // A verification page may return HTTP 403 while still rendering normally.
+            if (await VerificationRequired()) { Report(false, false, "Needs attention", "Complete site verification in the browser window. Automatic refresh is paused."); return; }
             if (failure.Length > 0) { Report(false, false, "Faulted", failure); return; }
             if (!loaded || view.CoreWebView2 == null) { Report(false, false, "Starting", "Loading browser page."); return; }
             var json = await view.CoreWebView2.ExecuteScriptAsync("(" + Probe + ")()");
@@ -85,6 +87,22 @@ internal sealed class ManagedBrowserHost
         { if (!form.IsDisposed) Report(false, false, "Faulted", "Browser page is not responding."); }
         finally { checking = false; }
     }
+    public async Task<bool> VerificationRequired()
+    {
+        if (view.CoreWebView2 == null) return false;
+        return await view.CoreWebView2.ExecuteScriptAsync("(" + VerificationProbe + ")()") == "true";
+    }
+
+    // Detect a blocking challenge only. Never interact with verification controls or clear cookies.
+    internal const string VerificationProbe = """
+    function() {
+        if (document.querySelector('#challenge-running, #challenge-stage, #challenge-form') || window._cf_chl_opt) return true;
+        const text = document.body?.innerText || '';
+        const verifying = /performing security verification|verify you are (?:a )?human|verifying you are (?:a )?human/i.test(text);
+        return verifying && (!!document.querySelector('iframe[src*="challenges.cloudflare.com"]') || /cloudflare/i.test(text) || /just a moment/i.test(document.title));
+    }
+    """;
+
     private sealed record Status(bool Ready, bool Playing, string State, string Detail);
 
     // Quiet call queues are healthy. Only active media with stalled progress is a playback failure.
